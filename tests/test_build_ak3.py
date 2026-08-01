@@ -345,6 +345,24 @@ class SusfsCompatibilityTests(unittest.TestCase):
 
             self.assertEqual(header.read_text(encoding="utf-8").count("SUSFS_MAGIC"), 1)
 
+    def test_legacy_query_bridge_writes_resukisu_response_status(self):
+        patch_text = (
+            Path(__file__).parents[1] / "patches" / "02-resukisu-susfs-legacy.patch"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("@@ -991,79 +983,92 @@", patch_text)
+        self.assertEqual(patch_text.count("} response = { .err = 0 };"), 2)
+        self.assertIn(
+            "strscpy(response.value, SUSFS_VERSION, sizeof(response.value));",
+            patch_text,
+        )
+        self.assertIn(
+            "strscpy(response.value, SUSFS_VARIANT, sizeof(response.value));",
+            patch_text,
+        )
+        self.assertIn("} __user *response = (void __user *)*arg;", patch_text)
+        self.assertIn("return put_user(0, &response->err);", patch_text)
+
 
 class NtsyncCompatibilityTests(unittest.TestCase):
     def test_linux_419_patch_falls_back_when_lockdep_state_api_is_unavailable(self):

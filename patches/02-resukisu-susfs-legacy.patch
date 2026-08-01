@@ -93,7 +93,7 @@ index 242b5711..9143a687 100644
  #else
          cmd.result = 0;
  #endif
-@@ -991,79 +983,73 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
+@@ -991,79 +983,92 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
      switch (cmd) {
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
      case CMD_SUSFS_ADD_SUS_PATH: {
@@ -181,18 +181,37 @@ index 242b5711..9143a687 100644
      case CMD_SUSFS_SHOW_ENABLED_FEATURES: {
 -        susfs_get_enabled_features(arg);
 -        return 0;
++        struct {
++            char value[8192];
++            int err;
++        } __user *response = (void __user *)*arg;
 +        static const char features[] = "sus_path,sus_mount,sus_kstat,spoof_uname,cmdline,open_redirect";
-+        return copy_to_user(*arg, features, sizeof(features)) ? -EFAULT : 0;
++
++        if (copy_to_user(response->value, features, sizeof(features)))
++            return -EFAULT;
++        return put_user(0, &response->err);
      }
      case CMD_SUSFS_SHOW_VARIANT: {
 -        susfs_show_variant(arg);
 -        return 0;
-+        return copy_to_user(*arg, SUSFS_VARIANT, sizeof(SUSFS_VARIANT)) ? -EFAULT : 0;
++        struct {
++            char value[16];
++            int err;
++        } response = { .err = 0 };
++
++        strscpy(response.value, SUSFS_VARIANT, sizeof(response.value));
++        return copy_to_user(*arg, &response, sizeof(response)) ? -EFAULT : 0;
      }
      case CMD_SUSFS_SHOW_VERSION: {
 -        susfs_show_version(arg);
 -        return 0;
-+        return copy_to_user(*arg, SUSFS_VERSION, sizeof(SUSFS_VERSION)) ? -EFAULT : 0;
++        struct {
++            char value[16];
++            int err;
++        } response = { .err = 0 };
++
++        strscpy(response.value, SUSFS_VERSION, sizeof(response.value));
++        return copy_to_user(*arg, &response, sizeof(response)) ? -EFAULT : 0;
      }
      }
      return 0;
