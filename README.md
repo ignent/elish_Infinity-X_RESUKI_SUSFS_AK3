@@ -2,7 +2,7 @@
 
 This repository builds a ReSukiSU-enabled custom kernel for the Xiaomi Pad 5
 Pro Wi-Fi (`elish`). It is based on Infinity X from
-[xiliahz/device_xiao](https://github.com/xiliahz/device_xiao).
+[xiliahz/device_xiao](https://github.com/xiliahz/device_xiaomi_elish).
 
 The build integrates ReSukiSU, SusFS, NTSync, BBR, and DroidSpaces-related
 networking and namespace configuration. It packages the resulting boot image
