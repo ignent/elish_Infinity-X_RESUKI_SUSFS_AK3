@@ -10,6 +10,7 @@ as a slot-aware AnyKernel3 ZIP.
 
 ## Build
 
+Ensure that `build_ak3.py` and `boot.img` are in the same directory.
 Run the full build from the repository root:
 
 ```sh
