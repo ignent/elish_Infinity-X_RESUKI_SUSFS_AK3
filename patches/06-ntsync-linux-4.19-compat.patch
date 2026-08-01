@@ -1,0 +1,30 @@
+diff --git a/drivers/misc/ntsync.c b/drivers/misc/ntsync.c
+--- a/drivers/misc/ntsync.c
++++ b/drivers/misc/ntsync.c
+@@ -20,13 +20,26 @@
+ #include <linux/slab.h>
+ #include <linux/spinlock.h>
++#include <linux/uaccess.h>
+ #include <uapi/linux/ntsync.h>
+ #include <linux/delay.h>
+ #include <linux/workqueue.h>
+ #include <linux/namei.h>
+ #include <linux/path.h>
+ #include <linux/xattr.h>
+ #include <linux/version.h>
++#include <linux/lockdep.h>
++
++/* Linux 4.19 lacks the lockdep helpers used by the upstream driver. */
++#ifndef LOCK_STATE_NOT_HELD
++#define LOCK_STATE_NOT_HELD 0
++#endif
++#ifndef lockdep_is_held
++#define lockdep_is_held(lock) (1)
++#endif
++#ifndef lockdep_assert
++#define lockdep_assert(condition) do { WARN_ON(!(condition)); } while (0)
++#endif
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+ #include <linux/mnt_idmapping.h>
+ #endif

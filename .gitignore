@@ -1,0 +1,6 @@
+.work/
+.cache/
+__pycache__/
+docs/
+outputs/
+boot.img

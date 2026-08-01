@@ -1,0 +1,198 @@
+diff --git a/kernel/Kbuild b/kernel/Kbuild
+index 4ac11d61..16f3fdc8 100644
+--- a/kernel/Kbuild
++++ b/kernel/Kbuild
+@@ -45,6 +45,8 @@ ccflags-y += -Wno-declaration-after-statement -Wno-unused-function -Wno-unused-v
+ ccflags-y += -Wno-int-to-pointer-cast -Wno-declaration-after-statement
+ 
+ ccflags-y += -I$(srctree)/security/selinux -I$(srctree)/security/selinux/include
++ccflags-y += -I$(srctree)/KernelSU/kernel/include -I$(srctree)/KernelSU/kernel
++ccflags-y += -I$(srctree)/KernelSU -I$(srctree)/KernelSU/uapi
+ ccflags-y += -I$(srctree)/$(src) -I$(srctree)/$(src)/include
+ ccflags-y += -I$(src) -I$(src)/include
+ 
+diff --git a/kernel/feature/kernel_umount.c b/kernel/feature/kernel_umount.c
+index 0cc95114..b094a2af 100644
+--- a/kernel/feature/kernel_umount.c
++++ b/kernel/feature/kernel_umount.c
+@@ -106,10 +106,6 @@ void try_umount(const char *mnt, int flags)
+     ksu_umount_mnt(mnt, &path, flags);
+ }
+ 
+-#ifdef CONFIG_KSU_SUSFS
+-extern struct work_struct susfs_extra_works;
+-#endif
+-
+ static void do_umount_for_current_task()
+ {
+     const struct cred *saved = override_creds(ksu_cred);
+@@ -175,12 +171,6 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
+     revert_creds(saved);
+ 
+ skip_umount_task:
+-    // do susfs setuid when susfs enabled
+-#ifdef CONFIG_KSU_SUSFS
+-    schedule_work(&susfs_extra_works);
+-    susfs_set_current_proc_umounted();
+-#endif
+-
+     return 0;
+ }
+ 
+diff --git a/kernel/feature/sucompat.c b/kernel/feature/sucompat.c
+index e707f11c..4ca5721d 100644
+--- a/kernel/feature/sucompat.c
++++ b/kernel/feature/sucompat.c
+@@ -264,10 +264,6 @@ static inline void ksu_handle_execveat_init(const char *filename, void *envp)
+             if (!ksu_is_current_proc_unprivillege())
+                 ksu_set_current_proc_unprivillege();
+ 
+-#ifdef CONFIG_KSU_SUSFS
+-            if (!susfs_is_current_proc_umounted())
+-                susfs_set_current_proc_umounted();
+-#endif
+         }
+ #endif
+         int ret = ksu_adb_root_handle_execve_manual(filename, (struct user_arg_ptr *)envp);
+diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
+index 242b5711..9143a687 100644
+--- a/kernel/supercall/dispatch.c
++++ b/kernel/supercall/dispatch.c
+@@ -6,7 +6,7 @@
+ #include <linux/uaccess.h>
+ #include <linux/version.h>
+ #ifdef CONFIG_KSU_SUSFS
+-#include <linux/susfs_def.h>
++#include <linux/susfs.h>
+ #endif
+ 
+ #include <linux/thread_info.h>
+@@ -161,9 +161,6 @@ static int do_report_event(void __user *arg)
+             } else {
+                 pr_info("boot_complete triggered\n");
+                 on_boot_completed();
+-#ifdef CONFIG_KSU_SUSFS
+-                susfs_start_sdcard_monitor_fn();
+-#endif
+             }
+         }
+         break;
+@@ -519,13 +516,8 @@ static int do_manage_mark(void __user *arg)
+         }
+         cmd.result = (u32)ret;
+ #elif defined(CONFIG_KSU_SUSFS)
+-        if (susfs_is_current_proc_umounted()) {
+-            ret = 0; // SYSCALL_TRACEPOINT is NOT flagged
+-        } else {
+-            ret = 1; // SYSCALL_TRACEPOINT is flagged
+-        }
+-        pr_info("manage_mark: ret for pid %d: %d\n", cmd.pid, ret);
+-        cmd.result = (u32)ret;
++        /* SUSFS v1.5.5 has no per-task tracepoint marker. */
++        cmd.result = 0;
+ #else
+         cmd.result = 0;
+ #endif
+@@ -991,79 +983,73 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
+     switch (cmd) {
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+     case CMD_SUSFS_ADD_SUS_PATH: {
+-        susfs_add_sus_path(arg);
+-        return 0;
++        return susfs_add_sus_path((struct st_susfs_sus_path __user *)*arg);
+     }
++#ifdef CMD_SUSFS_ADD_SUS_PATH_LOOP
+     case CMD_SUSFS_ADD_SUS_PATH_LOOP: {
+-        susfs_add_sus_path_loop(arg);
+-        return 0;
++        /* v1.5.5 paths already cover the configured subtree. */
++        return susfs_add_sus_path((struct st_susfs_sus_path __user *)*arg);
+     }
++#endif
+ #endif //#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++#ifdef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+     case CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS: {
+-        susfs_set_hide_sus_mnts_for_non_su_procs(arg);
+-        return 0;
++        return -EOPNOTSUPP;
+     }
++#endif
+ #endif //#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+ #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+     case CMD_SUSFS_ADD_SUS_KSTAT: {
+-        susfs_add_sus_kstat(arg);
+-        return 0;
++        return susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)*arg);
+     }
+     case CMD_SUSFS_UPDATE_SUS_KSTAT: {
+-        susfs_update_sus_kstat(arg);
+-        return 0;
++        return susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)*arg);
+     }
+     case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY: {
+-        susfs_add_sus_kstat(arg);
+-        return 0;
++        return susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)*arg);
+     }
+ #endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+ #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+     case CMD_SUSFS_SET_UNAME: {
+-        susfs_set_uname(arg);
+-        return 0;
++        return susfs_set_uname((struct st_susfs_uname __user *)*arg);
+     }
+ #endif //#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+ #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+     case CMD_SUSFS_ENABLE_LOG: {
+-        susfs_enable_log(arg);
++        susfs_set_log((bool)(unsigned long)*arg);
+         return 0;
+     }
+ #endif //#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+ #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+     case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG: {
+-        susfs_set_cmdline_or_bootconfig(arg);
+-        return 0;
++        return susfs_set_cmdline_or_bootconfig((char __user *)*arg);
+     }
+ #endif //#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+ #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+     case CMD_SUSFS_ADD_OPEN_REDIRECT: {
+-        susfs_add_open_redirect(arg);
+-        return 0;
++        return susfs_add_open_redirect((struct st_susfs_open_redirect __user *)*arg);
+     }
+ #endif //#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+ #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+     case CMD_SUSFS_ADD_SUS_MAP: {
+-        susfs_add_sus_map(arg);
+-        return 0;
++        return -EOPNOTSUPP;
+     }
+ #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
++#ifdef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+     case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING: {
+-        susfs_set_avc_log_spoofing(arg);
+-        return 0;
++        return -EOPNOTSUPP;
+     }
++#endif
+     case CMD_SUSFS_SHOW_ENABLED_FEATURES: {
+-        susfs_get_enabled_features(arg);
+-        return 0;
++        static const char features[] = "sus_path,sus_mount,sus_kstat,spoof_uname,cmdline,open_redirect";
++        return copy_to_user(*arg, features, sizeof(features)) ? -EFAULT : 0;
+     }
+     case CMD_SUSFS_SHOW_VARIANT: {
+-        susfs_show_variant(arg);
+-        return 0;
++        return copy_to_user(*arg, SUSFS_VARIANT, sizeof(SUSFS_VARIANT)) ? -EFAULT : 0;
+     }
+     case CMD_SUSFS_SHOW_VERSION: {
+-        susfs_show_version(arg);
+-        return 0;
++        return copy_to_user(*arg, SUSFS_VERSION, sizeof(SUSFS_VERSION)) ? -EFAULT : 0;
+     }
+     }
+     return 0;

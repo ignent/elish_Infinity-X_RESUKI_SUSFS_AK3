@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "kernel": {
+    "id": "lineage-sm8250",
+    "url": "https://github.com/LineageOS/android_kernel_xiaomi_sm8250.git",
+    "commit": "71b13e62f057a649b77fe4062feb73ee72ad609c",
+    "local_dir": "android_kernel_xiaomi_sm8250",
+    "defconfig": "vendor/kona_defconfig",
+    "fragments": [
+      "arch/arm64/configs/vendor/xiaomi/sm8250-common.config",
+      "arch/arm64/configs/vendor/xiaomi/elish.config"
+    ]
+  },
+  "resukisu": {
+    "id": "resukisu",
+    "url": "https://github.com/ReSukiSU/ReSukiSU.git",
+    "commit": "73533390e6e02571014f0ee77ca233b99f57ab7a",
+    "full_history": true,
+    "local_dir": "android_kernel_xiaomi_sm8250/KernelSU"
+  },
+  "susfs": {
+    "id": "susfs4ksu",
+    "url": "https://gitlab.com/simonpunk/susfs4ksu.git",
+    "commit": "001e69919c6271f690fd00b17e4c721c9e599152",
+    "branch": "kernel-4.19",
+    "local_dir": ".tmp/kernel-patch-catalog.k3eeRB/susfs4ksu"
+  },
+  "ntsync": {
+    "id": "wildkernels",
+    "url": "https://github.com/WildKernels/kernel_patches.git",
+    "commit": "24865a0bc50dfb65b04153cc9ad2879a9c26cc7e",
+    "local_dir": ".tmp/kernel-patch-catalog.k3eeRB/wildkernels"
+  },
+  "anykernel3": {
+    "id": "anykernel3",
+    "url": "https://github.com/osm0sis/AnyKernel3.git",
+    "commit": "1c9a500dd4aa8081952523126e97eb155aed941b",
+    "local_dir": "AnyKernel3"
+  },
+  "toolchain": {
+    "id": "android-clang-host-linux-x86",
+    "url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
+    "commit": "9916fb51ccb914d62d35ad9a7b9b21d2ef046928",
+    "local_dir": "prebuilts",
+    "revision": "r563880c",
+    "bin_subdir": "clang-r563880c/bin"
+  },
+  "device": {
+    "codename": "elish",
+    "boot_header_version": 3,
+    "output_name": "Elish-SusFS-DroidSpaces-r563880c.zip"
+  },
+  "features": {
+    "susfs": "v1.5.5",
+    "bbr": true,
+    "ip_set": true,
+    "ipv6_nat": true,
+    "ttl_hl": true,
+    "unicode_fix": true,
+    "droidspaces": true,
+    "ntsync": true,
+    "bbg": {
+      "status": "unsupported",
+      "reason": "No compatible implementation source exists for Linux 4.19."
+    }
+  },
+  "patches": [
+    {
+      "id": "ntsync-base",
+      "file": "03-ntsync-base.patch",
+      "target": "kernel"
+    },
+    {
+      "id": "ntsync-linux-4.19-compat",
+      "file": "06-ntsync-linux-4.19-compat.patch",
+      "target": "kernel"
+    },
+    {
+      "id": "kernel-integration",
+      "file": "01-kernel-integration.patch",
+      "target": "kernel"
+    },
+    {
+      "id": "resukisu-susfs-legacy",
+      "file": "02-resukisu-susfs-legacy.patch",
+      "target": "resukisu"
+    }
+  ]
+}
