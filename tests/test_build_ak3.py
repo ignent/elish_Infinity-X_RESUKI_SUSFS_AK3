@@ -179,6 +179,7 @@ class FullBuildConfigurationTests(unittest.TestCase):
         self.assertEqual(FULL_BUILD_CONFIG["CONFIG_KSU_SUSFS"], "y")
         self.assertEqual(FULL_BUILD_CONFIG["CONFIG_NTSYNC"], "y")
         self.assertEqual(FULL_BUILD_CONFIG["CONFIG_TCP_CONG_BBR"], "y")
+        self.assertEqual(FULL_BUILD_CONFIG["CONFIG_FUSE_BPF"], "y")
 
     def test_full_build_integration_patch_keeps_all_supported_hunks(self):
         manifest = load_manifest(Path(__file__).parents[1] / "build_manifest.json")
@@ -209,6 +210,7 @@ class FullBuildConfigurationTests(unittest.TestCase):
             "CONFIG_POSIX_MQUEUE_SYSCTL": "y",
             "CONFIG_SYSVIPC_COMPAT": "y",
             "CONFIG_SYSVIPC_SYSCTL": "y",
+            "CONFIG_SDCARD_FS": "n",
             "CONFIG_TCP_CONG_BIC": "m",
             "CONFIG_TCP_CONG_HTCP": "m",
             "CONFIG_TCP_CONG_WESTWOOD": "m",
@@ -216,6 +218,7 @@ class FullBuildConfigurationTests(unittest.TestCase):
         baseline = {
             **{name: "n" for name in derived_values},
             "CONFIG_DEFAULT_TCP_CONG": '"cubic"',
+            "CONFIG_SDCARD_FS": "y",
             "CONFIG_QCOM_WATCHDOG_V2": "y",
         }
         final = {**baseline, **derived_values}
