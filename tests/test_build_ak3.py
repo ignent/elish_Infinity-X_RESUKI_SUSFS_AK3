@@ -11,10 +11,14 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import build_ak3
 from build_ak3 import (
+    BuildIdentity,
     ak3_archive_name,
     adapt_susfs_legacy_header,
     apply_patches,
+    build_identity_config,
+    build_identity_environment,
     cached_git_matches,
     ccache_environment,
     ccache_statistics,
@@ -28,6 +32,7 @@ from build_ak3 import (
     latest_remote_head_commit,
     load_manifest,
     main,
+    merged_config,
     parse_args,
     pinned_fetch_commands,
     render_build_info,
@@ -35,9 +40,11 @@ from build_ak3 import (
     run,
     select_integration_patch,
     package_ak3,
+    parse_build_identity,
     update_resukisu_revision,
     validate_config_preservation,
     write_patch_files,
+    set_kernel_release,
 )
 
 
@@ -79,6 +86,92 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(args.ccache_dir, script_root / ".cache/ak3-builder/ccache")
         self.assertEqual(args.work_dir, Path("/tmp/ak3"))
         self.assertFalse(hasattr(args, "stage"))
+
+
+class BuildIdentityTests(unittest.TestCase):
+    def identity_data(self) -> dict[str, object]:
+        return {
+            "kernel_release": "4.19.325",
+            "localversion": "-cip131-st15-perf",
+            "localversion_auto": True,
+            "build_user": "ignis",
+            "build_host": "Lecoo",
+            "build_timestamp": "Sun Aug 2 01:27:19 CST 2026",
+            "build_number": 1,
+        }
+
+    def test_identity_maps_to_kconfig_and_kbuild_environment(self):
+        identity = BuildIdentity(**self.identity_data())
+
+        self.assertEqual(
+            build_identity_config(identity),
+            {
+                "CONFIG_LOCALVERSION": '"-cip131-st15-perf"',
+                "CONFIG_LOCALVERSION_AUTO": "y",
+            },
+        )
+        self.assertEqual(
+            build_identity_environment({}, identity),
+            {
+                "KBUILD_BUILD_USER": "ignis",
+                "KBUILD_BUILD_HOST": "Lecoo",
+                "KBUILD_BUILD_TIMESTAMP": "Sun Aug 2 01:27:19 CST 2026",
+                "KBUILD_BUILD_VERSION": "1",
+            },
+        )
+
+    def test_parse_build_identity_rejects_invalid_fields(self):
+        invalid_release = self.identity_data()
+        invalid_release["kernel_release"] = "4.19"
+        invalid_timestamp = self.identity_data()
+        invalid_timestamp["build_timestamp"] = "Sun\nAug"
+        invalid_number = self.identity_data()
+        invalid_number["build_number"] = 0
+
+        for data, field in (
+            (invalid_release, "kernel_release"),
+            (invalid_timestamp, "build_timestamp"),
+            (invalid_number, "build_number"),
+        ):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
+                parse_build_identity(data)
+
+    def test_set_kernel_release_rewrites_only_version_assignments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            makefile = source / "Makefile"
+            makefile.write_text(
+                "VERSION = 4\nPATCHLEVEL = 19\nSUBLEVEL = 325\nNAME = test\n",
+                encoding="utf-8",
+            )
+
+            set_kernel_release(source, "4.19.326")
+
+            self.assertEqual(
+                makefile.read_text(encoding="utf-8"),
+                "VERSION = 4\nPATCHLEVEL = 19\nSUBLEVEL = 326\nNAME = test\n",
+            )
+
+    def test_source_identity_clears_existing_localversion_fragments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / "Makefile").write_text(
+                "VERSION = 4\nPATCHLEVEL = 19\nSUBLEVEL = 325\n",
+                encoding="utf-8",
+            )
+            (source / "localversion-cip").write_text("-cip131\n", encoding="utf-8")
+            (source / "localversion-st").write_text("-st15\n", encoding="utf-8")
+            identity = BuildIdentity(**self.identity_data())
+
+            self.assertTrue(hasattr(build_ak3, "apply_kernel_source_identity"))
+            build_ak3.apply_kernel_source_identity(source, identity)
+
+            self.assertEqual(
+                (source / "Makefile").read_text(encoding="utf-8"),
+                "VERSION = 4\nPATCHLEVEL = 19\nSUBLEVEL = 325\n",
+            )
+            self.assertEqual((source / "localversion-cip").read_text(encoding="utf-8"), "")
+            self.assertEqual((source / "localversion-st").read_text(encoding="utf-8"), "")
 
 
 class FullBuildTests(unittest.TestCase):
@@ -237,6 +330,31 @@ class FullBuildConfigurationTests(unittest.TestCase):
         self.assertEqual(
             {name: expected_values[name] for name in derived_values}, derived_values
         )
+        validate_config_preservation(baseline, final, set(expected_values))
+
+        final["CONFIG_QCOM_WATCHDOG_V2"] = "n"
+        with self.assertRaisesRegex(RuntimeError, "CONFIG_QCOM_WATCHDOG_V2"):
+            validate_config_preservation(baseline, final, set(expected_values))
+
+    def test_full_build_allows_manifest_identity_kconfig_changes(self):
+        identity = BuildIdentity(
+            kernel_release="4.19.325",
+            localversion="-cip131-st15-perf",
+            localversion_auto=True,
+            build_user="ignis",
+            build_host="Lecoo",
+            build_timestamp="Sun Aug 2 01:27:19 CST 2026",
+            build_number=1,
+        )
+        identity_config = build_identity_config(identity)
+        baseline = {
+            "CONFIG_LOCALVERSION": '""',
+            "CONFIG_LOCALVERSION_AUTO": "n",
+            "CONFIG_QCOM_WATCHDOG_V2": "y",
+        }
+        final = {**baseline, **identity_config}
+        expected_values = merged_config(FULL_BUILD_EXPECTED_CONFIG, identity_config)
+
         validate_config_preservation(baseline, final, set(expected_values))
 
         final["CONFIG_QCOM_WATCHDOG_V2"] = "n"
@@ -543,6 +661,12 @@ class SourceCompatibilityTests(unittest.TestCase):
                 boot_img.write_bytes(b"boot")
                 run_dir = root / "run"
                 run_dir.mkdir()
+                kernel = root / "kernel"
+                kernel.mkdir()
+                (kernel / "Makefile").write_text(
+                    "VERSION = 4\nPATCHLEVEL = 19\nSUBLEVEL = 325\n",
+                    encoding="utf-8",
+                )
                 args = SimpleNamespace(
                     manifest=root / "manifest.json",
                     boot_img=boot_img,
@@ -559,14 +683,26 @@ class SourceCompatibilityTests(unittest.TestCase):
                     patch("build_ak3.parse_args", return_value=args),
                     patch(
                         "build_ak3.load_manifest",
-                        return_value={"toolchain": {}, "anykernel3": {}},
+                        return_value={
+                            "toolchain": {},
+                            "anykernel3": {},
+                            "build_identity": {
+                                "kernel_release": "4.19.325",
+                                "localversion": "-cip131-st15-perf",
+                                "localversion_auto": True,
+                                "build_user": "ignis",
+                                "build_host": "Lecoo",
+                                "build_timestamp": "Sun Aug 2 01:27:19 CST 2026",
+                                "build_number": 1,
+                            },
+                        },
                     ),
                     patch(
                         "build_ak3.update_resukisu_revision",
                         side_effect=lambda _path, manifest: manifest,
                     ),
                     patch("build_ak3.create_run_directory", return_value=run_dir),
-                    patch("build_ak3.prepare_patched_kernel", return_value=root / "kernel"),
+                    patch("build_ak3.prepare_patched_kernel", return_value=kernel),
                     patch("build_ak3.extract_boot_config", return_value=object()),
                     patch(
                         "build_ak3.ensure_git_source",
@@ -613,6 +749,8 @@ class CcacheTests(unittest.TestCase):
 
         self.assertEqual(env["CC"], "/usr/bin/ccache clang")
         self.assertEqual(env["CXX"], "/usr/bin/ccache clang++")
+        self.assertIn("CCACHE_NODIRECT", env)
+        self.assertEqual(env["CCACHE_NODIRECT"], "true")
         self.assertEqual(env["CCACHE_DIR"], str(cache_dir.resolve()))
         self.assertEqual(env["CCACHE_BASEDIR"], str(source.resolve()))
         self.assertEqual(env["CCACHE_NOHASHDIR"], "true")

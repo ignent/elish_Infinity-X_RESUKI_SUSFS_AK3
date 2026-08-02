@@ -14,7 +14,7 @@
   "resukisu": {
     "id": "resukisu",
     "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-    "commit": "73533390e6e02571014f0ee77ca233b99f57ab7a",
+    "commit": "59c99fdf1735c37681ff18c7ffd7834741dcccbf",
     "full_history": true,
     "local_dir": "android_kernel_xiaomi_sm8250/KernelSU"
   },
@@ -49,6 +49,15 @@
     "codename": "elish",
     "boot_header_version": 3,
     "output_name": "Elish-SusFS-DroidSpaces-r563880c.zip"
+  },
+  "build_identity": {
+    "kernel_release": "4.19.157",
+    "localversion": "-perf-gf8cf95f4dc15",
+    "localversion_auto": true,
+    "build_user": "builder",
+    "build_host": "pangu-build-component-vendor-270518-njpgf-9wpr1-t1mg4",
+    "build_timestamp": "Tue May 7 07:59:22 UTC 2024",
+    "build_number": 1
   },
   "features": {
     "susfs": "v1.5.5",

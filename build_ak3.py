@@ -30,6 +30,7 @@ REQUIRED_SECTIONS = {
     "anykernel3",
     "toolchain",
     "device",
+    "build_identity",
     "features",
     "patches",
 }
@@ -172,6 +173,17 @@ FULL_BUILD_EXPECTED_CONFIG = merged_config(FULL_BUILD_CONFIG, FULL_CONFIG_DERIVE
 FULL_BUILD_DESCRIPTION = "ReSukiSU + SusFS + NTSync + networking/DroidSpaces"
 
 
+@dataclass(frozen=True)
+class BuildIdentity:
+    kernel_release: str
+    localversion: str
+    localversion_auto: bool
+    build_user: str
+    build_host: str
+    build_timestamp: str
+    build_number: int
+
+
 def default_input_path(name: str, fallback: Path) -> Path:
     """Prefer inputs beside this script, with a compatibility fallback."""
     candidate = SCRIPT_ROOT / name
@@ -241,6 +253,45 @@ def run(
     return combined
 
 
+def parse_build_identity(data: Any) -> BuildIdentity:
+    """Validate the reproducible kernel identity supplied by the manifest."""
+    if not isinstance(data, dict):
+        raise ValueError("build_identity must be an object")
+
+    kernel_release = data.get("kernel_release")
+    if not isinstance(kernel_release, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", kernel_release):
+        raise ValueError("build_identity.kernel_release must use X.Y.Z format")
+
+    localversion = data.get("localversion")
+    if not isinstance(localversion, str) or not localversion.startswith("-"):
+        raise ValueError("build_identity.localversion must start with '-'")
+
+    localversion_auto = data.get("localversion_auto")
+    if not isinstance(localversion_auto, bool):
+        raise ValueError("build_identity.localversion_auto must be boolean")
+
+    text_values: dict[str, str] = {}
+    for field in ("build_user", "build_host", "build_timestamp"):
+        value = data.get(field)
+        if not isinstance(value, str) or not value or "\r" in value or "\n" in value:
+            raise ValueError(f"build_identity.{field} must be a non-empty single line")
+        text_values[field] = value
+
+    build_number = data.get("build_number")
+    if isinstance(build_number, bool) or not isinstance(build_number, int) or build_number < 1:
+        raise ValueError("build_identity.build_number must be a positive integer")
+
+    return BuildIdentity(
+        kernel_release=kernel_release,
+        localversion=localversion,
+        localversion_auto=localversion_auto,
+        build_user=text_values["build_user"],
+        build_host=text_values["build_host"],
+        build_timestamp=text_values["build_timestamp"],
+        build_number=build_number,
+    )
+
+
 def load_manifest(path: Path) -> dict[str, Any]:
     """Load and validate the version-locked build manifest."""
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -249,6 +300,7 @@ def load_manifest(path: Path) -> dict[str, Any]:
         raise ValueError(f"manifest is missing required sections: {', '.join(missing)}")
     if data.get("schema_version") != 1:
         raise ValueError("unsupported manifest schema_version")
+    parse_build_identity(data["build_identity"])
     return data
 
 
@@ -574,6 +626,53 @@ def kernel_build_commands(source: Path, output: Path, compiler: str) -> list[lis
     ]
 
 
+def build_identity_config(identity: BuildIdentity) -> dict[str, str]:
+    """Translate manifest identity values into their Kconfig symbols."""
+    return {
+        "CONFIG_LOCALVERSION": json.dumps(identity.localversion),
+        "CONFIG_LOCALVERSION_AUTO": "y" if identity.localversion_auto else "n",
+    }
+
+
+def build_identity_environment(base_env: dict[str, str], identity: BuildIdentity) -> dict[str, str]:
+    """Set the Kbuild banner inputs without changing the host environment."""
+    env = base_env.copy()
+    env.update(
+        {
+            "KBUILD_BUILD_USER": identity.build_user,
+            "KBUILD_BUILD_HOST": identity.build_host,
+            "KBUILD_BUILD_TIMESTAMP": identity.build_timestamp,
+            "KBUILD_BUILD_VERSION": str(identity.build_number),
+        }
+    )
+    return env
+
+
+def set_kernel_release(source: Path, release: str) -> None:
+    """Apply a manifest release only to the disposable kernel source clone."""
+    match = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", release)
+    if not match:
+        raise ValueError("kernel_release must use X.Y.Z format")
+
+    makefile = source / "Makefile"
+    text = makefile.read_text(encoding="utf-8")
+    for name, value in zip(("VERSION", "PATCHLEVEL", "SUBLEVEL"), match.groups()):
+        pattern = rf"^{name}\s*=\s*[^\r\n]*$"
+        replacement = f"{name} = {value}"
+        text, replacements = re.subn(pattern, replacement, text, flags=re.MULTILINE)
+        if replacements != 1:
+            raise RuntimeError(f"unable to uniquely replace {name} in {makefile}")
+    makefile.write_text(text, encoding="utf-8")
+
+
+def apply_kernel_source_identity(source: Path, identity: BuildIdentity) -> None:
+    """Make the disposable source tree derive its complete identity from the manifest."""
+    set_kernel_release(source, identity.kernel_release)
+    for fragment in source.glob("localversion*"):
+        if fragment.is_file():
+            fragment.write_text("", encoding="utf-8")
+
+
 def ccache_environment(base_env: dict[str, str], cache_dir: Path, source: Path) -> dict[str, str]:
     """Return an environment that routes kernel C/C++ compilation through ccache."""
     ccache = shutil.which("ccache")
@@ -589,6 +688,7 @@ def ccache_environment(base_env: dict[str, str], cache_dir: Path, source: Path) 
             "CCACHE_DIR": str(resolved_cache),
             "CCACHE_BASEDIR": str(source.resolve()),
             "CCACHE_NOHASHDIR": "true",
+            "CCACHE_NODIRECT": "true",
         }
     )
     return env
@@ -702,6 +802,7 @@ def build_kernel(
     output: Path,
     ccache_dir: Path,
     boot_config: BootConfigBaseline,
+    identity: BuildIdentity,
 ) -> Path:
     """Compile the fixed full overlay against the input boot's exact configuration."""
     toolchain_bin = toolchain / manifest["toolchain"]["bin_subdir"]
@@ -710,11 +811,13 @@ def build_kernel(
     env = os.environ.copy()
     env["PATH"] = f"{toolchain_bin}:{env['PATH']}"
     env = ccache_environment(env, ccache_dir, kernel)
+    env = build_identity_environment(env, identity)
     commands = kernel_build_commands(kernel, output, env["CC"])
     output.mkdir(parents=True, exist_ok=True)
     shutil.copy2(boot_config.config, output / ".config")
     overlay = output / "full.config"
-    write_config_overlay(overlay, FULL_BUILD_CONFIG)
+    identity_config = build_identity_config(identity)
+    write_config_overlay(overlay, merged_config(FULL_BUILD_CONFIG, identity_config))
     run(
         [str(kernel / "scripts/kconfig/merge_config.sh"), "-m", str(output / ".config"), str(overlay)],
         cwd=kernel,
@@ -723,7 +826,7 @@ def build_kernel(
     )
     run(commands[1], env=env, live=True)
     final_config = parse_kernel_config((output / ".config").read_text(encoding="utf-8"))
-    expected_values = FULL_BUILD_EXPECTED_CONFIG
+    expected_values = merged_config(FULL_BUILD_EXPECTED_CONFIG, identity_config)
     validate_config_preservation(boot_config.values, final_config, set(expected_values))
     for name, value in expected_values.items():
         if final_config.get(name, "n") != value:
@@ -871,6 +974,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     manifest = load_manifest(args.manifest)
+    identity = parse_build_identity(manifest["build_identity"])
     manifest = update_resukisu_revision(args.manifest, manifest)
     if not args.boot_img.is_file():
         raise FileNotFoundError(f"input boot image does not exist: {args.boot_img}")
@@ -881,6 +985,7 @@ def main() -> int:
     completed = False
     try:
         kernel = prepare_patched_kernel(manifest, args.cache_dir, args.local_root, run_dir)
+        apply_kernel_source_identity(kernel, identity)
         print(f"Patched kernel source: {kernel}")
         if args.patches_only:
             print("Patch-only verification completed.")
@@ -897,7 +1002,9 @@ def main() -> int:
 
         # Step 3: merge device fragments and compile the kernel image and modules.
         print("[phase 3/5] configure and compile kernel (live output enabled)", flush=True)
-        image = build_kernel(kernel, manifest, toolchain, run_dir / "out", args.ccache_dir, boot_config)
+        image = build_kernel(
+            kernel, manifest, toolchain, run_dir / "out", args.ccache_dir, boot_config, identity
+        )
 
         # Step 4: replace only the boot image's kernel payload with magiskboot.
         print("[phase 4/5] repack boot image", flush=True)
