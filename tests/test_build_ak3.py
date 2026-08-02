@@ -275,14 +275,14 @@ class FullBuildConfigurationTests(unittest.TestCase):
         self.assertEqual(FULL_BUILD_CONFIG["CONFIG_FUSE_BPF"], "y")
 
     def test_full_build_configuration_disables_user_namespace(self):
-        self.assertEqual(FULL_BUILD_CONFIG["CONFIG_USER_NS"], "n")
+        self.assertEqual(FULL_BUILD_CONFIG["CONFIG_USER_NS"], "y")
 
     def test_full_build_integration_patch_disables_user_namespace(self):
         patch_text = (
             Path(__file__).parents[1] / "patches" / "01-kernel-integration.patch"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("+CONFIG_USER_NS=n", patch_text)
+        self.assertIn("+CONFIG_USER_NS=y", patch_text)
 
     def test_full_build_integration_patch_keeps_all_supported_hunks(self):
         manifest = load_manifest(Path(__file__).parents[1] / "build_manifest.json")

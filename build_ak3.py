@@ -142,7 +142,7 @@ FULL_CONFIG = {
     "CONFIG_NF_NAT_IPV4": "y",
     "CONFIG_IP_NF_NAT": "y",
     "CONFIG_ANDROID_PARANOID_NETWORK": "n",
-    "CONFIG_USER_NS": "n",
+    "CONFIG_USER_NS": "y",
 }
 
 # These values are selected or defaulted by Kconfig when FULL_CONFIG is enabled.
